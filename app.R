@@ -12,20 +12,30 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      actionButton("upload_guide", "Upload Dataset Guide", class = "btn-primary"),
-      selectInput("upload_type", "Select Upload Option:",
-                  choices = list("Full Dataset (All Columns)" = "full", "Gene and HGVS_Pro Only" = "gene_variant"),
-                  selected = "full"),
+      # Radio buttons to select between uploading a dataset or using an existing one
+      radioButtons("data_source", "Choose Dataset:",
+                   choices = list("Upload Your Own Dataset" = "upload", "Use Existing Dataset" = "existing"),
+                   selected = "existing"),
+      
+      # Conditional panel that shows upload options if the user chooses to upload their own dataset
       conditionalPanel(
-        condition = "input.upload_type == 'full'",
-        fileInput("file_full", "Upload Full CSV File", 
-                  accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+        condition = "input.data_source == 'upload'",
+        selectInput("upload_type", "Select Upload Option:",
+                    choices = list("Full Dataset (All Columns)" = "full", "Gene and HGVS Only" = "gene_variant"),
+                    selected = "full"),
+        conditionalPanel(
+          condition = "input.upload_type == 'full'",
+          fileInput("file_full", "Upload Full CSV File", 
+                    accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+        ),
+        conditionalPanel(
+          condition = "input.upload_type == 'gene_variant'",
+          fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
+                    accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+        )
       ),
-      conditionalPanel(
-        condition = "input.upload_type == 'gene_variant'",
-        fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
-                  accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
-      ),
+      
+      # Additional controls that are always visible regardless of data source
       selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
       checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
       checkboxGroupInput("scores", "Select Scores to Include:",
@@ -40,7 +50,7 @@ ui <- fluidPage(
       downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
       downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata"),
       helpText("Example genes: LDLR, TTN (no VARITY), ACADVL, DNM2, MYH7, SCN5A, etc."),
-      helpText("If error occurs, it means there is not enough data to generate the PRC. Try using fewer predictors."), 
+      helpText("If error occurs, it means there is not enough data to generate the PRC. Try using fewer predictors."),
       actionButton("helpButton", "Help (Q&A)", class = "btn-warning")
     ),
     
@@ -50,6 +60,7 @@ ui <- fluidPage(
     )
   )
 )
+
 
 server <- function(input, output, session) {
   plot_data <- reactiveVal(NULL)
