@@ -14,7 +14,7 @@ ui <- fluidPage(
     sidebarPanel(
       actionButton("upload_guide", "Upload Dataset Guide", class = "btn-primary"),
       selectInput("upload_type", "Select Upload Option:",
-                  choices = list("Full Dataset (All Columns)" = "full", "Gene and Variant ID Only" = "gene_variant"),
+                  choices = list("Full Dataset (All Columns)" = "full", "Gene and HGVS_Pro Only" = "gene_variant"),
                   selected = "full"),
       conditionalPanel(
         condition = "input.upload_type == 'full'",
@@ -23,7 +23,7 @@ ui <- fluidPage(
       ),
       conditionalPanel(
         condition = "input.upload_type == 'gene_variant'",
-        fileInput("file_gene_variant", "Upload Gene and Variant ID CSV File", 
+        fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
                   accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
       ),
       selectizeInput("gene", "Select Gene Name:", choices = NULL, options = list(maxOptions = 1000)),
@@ -227,11 +227,11 @@ server <- function(input, output, session) {
               <li><b>revel:</b> REVEL score</li>
               <li><b>classification:</b> TRUE for Pathogenic, FALSE for Benign</li>
             </ul>
-            <h4>Option 2: Gene and Variant ID Only</h4>
+            <h4>Option 2: Gene and HGVS (Protein) Only</h4>
             <p>Upload a CSV file with the following columns:</p>
             <ul>
               <li><b>gene:</b> Gene name</li>
-              <li><b>variant_id:</b> Variant ID</li>
+              <li><b>HGVS_Pro:</b> HGVS_Pro</li>
             </ul>
             <p>The data will be matched with the stored dataset to retrieve corresponding scores.</p>"),
       easyClose = TRUE,
