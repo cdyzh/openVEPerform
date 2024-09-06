@@ -1,4 +1,5 @@
 library(shiny)
+library(shinyjs)
 library(dplyr)
 library(yogiroc)
 library(rsconnect)
@@ -8,6 +9,9 @@ library(tinytex)
 
 # Define UI for the application
 ui <- fluidPage(
+
+  useShinyjs(),  # Initialize shinyjs for resetting files after error
+
   titlePanel("VEPerform"),
   
   sidebarLayout(
@@ -32,7 +36,8 @@ ui <- fluidPage(
           condition = "input.upload_type == 'gene_variant'",
           fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
                     accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
-        )
+        ),
+        actionButton("upload_guide", "Upload Guide", class = "btn-info")
       ),
       
       # Additional controls that are always visible regardless of data source
@@ -77,22 +82,60 @@ server <- function(input, output, session) {
   prcdata <- reactive({
     if (input$upload_type == "full" && !is.null(input$file_full)) {
       req(input$file_full)
+      
+      # Read uploaded data
       df <- read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
+      
+      # Check if the number of columns matches the expected format (6 columns in this case)
+      if (ncol(df) != length(standard_colnames)) {
+        showModal(modalDialog(
+          title = "Error",
+          "The uploaded dataset does not have the required number of columns. Please ensure your file has exactly the following columns: base__hugo, gnomad__af, varity_r__varity_r, alphamissense__am_pathogenicity, revel__score, classification.",
+          easyClose = TRUE,
+          footer = modalButton("Close")
+        ))
+        
+        # Reset the file input so user can re-upload the file
+        reset("file_full")
+        updateFileInput(session, "file_full", value = NULL) # TODO: error handling for uploading wrong file
+        return(NULL)
+      }
+      
+      # If correct, assign the standard column names
       colnames(df) <- standard_colnames
       df
     } else if (input$upload_type == "gene_variant" && !is.null(input$file_gene_variant)) {
       req(input$file_gene_variant)
+      
+      # Read uploaded gene/variant data
       df <- read.csv(input$file_gene_variant$datapath, stringsAsFactors = FALSE)
+      
+      # Check if the file has exactly two columns
+      if (ncol(df) != 2) {
+        showModal(modalDialog(
+          title = "Error",
+          "The uploaded dataset must have exactly two columns: base__hugo and base__achange.",
+          easyClose = TRUE,
+          footer = modalButton("Close")
+        ))
+        
+        # Reset the file input so user can re-upload the file
+        reset("file_gene_variant")
+        updateFileInput(session, "file_gene_variant", value = NULL) # TODO: error handling
+        return(NULL)
+      }
+      
+      # Assign column names and merge with full dataset
+      colnames(df) <- c("base__hugo", "base__achange")
       
       # Load the full stored dataset for matching
       full_df <- read.csv("preprocessed_id.csv", stringsAsFactors = FALSE)
-      colnames(df) <- c("base__hugo", "base__achange")
       
       # Merge based on gene and variant ID
       df <- merge(df, full_df, by = c("base__hugo", "base__achange"))
-      print(df)
       df
     } else {
+      # Use existing dataset
       read.table("preprocessed_id.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
     }
   })
@@ -264,3 +307,8 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
+
+# Start the plumber API
+#pr <- plumber::plumb("api.R")
+#pr$run(port = 8000)
+
