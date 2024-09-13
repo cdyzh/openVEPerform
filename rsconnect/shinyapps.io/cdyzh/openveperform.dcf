@@ -1,0 +1,10 @@
+name: openveperform
+title:
+username: cdyzh
+account: cdyzh
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 12625189
+bundleId: 9070433
+url: https://cdyzh.shinyapps.io/openveperform/
+version: 1
