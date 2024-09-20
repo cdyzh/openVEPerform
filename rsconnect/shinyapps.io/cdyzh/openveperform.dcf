@@ -5,6 +5,6 @@ account: cdyzh
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 12625189
-bundleId: 9070433
+bundleId: 9096001
 url: https://cdyzh.shinyapps.io/openveperform/
 version: 1

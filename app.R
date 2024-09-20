@@ -1,6 +1,6 @@
 library(shiny)
-library(shinyjs)
 library(dplyr)
+library(yogiroc)
 library(httr)
 library(jsonlite)
 library(shinycssloaders)  # For the loading spinner
@@ -8,14 +8,7 @@ library(DT) # For creating data
 
 # Define UI for the application
 ui <- fluidPage(
-<<<<<<< HEAD
   titlePanel("openVEPerform"),
-=======
-
-  useShinyjs(),  # Initialize shinyjs for resetting files after error
-
-  titlePanel("VEPerform"),
->>>>>>> accab69bb2231ac38ebe08526a8009e4539103db
   
   sidebarLayout(
     sidebarPanel(
@@ -23,29 +16,8 @@ ui <- fluidPage(
       fileInput("variant_file", "Upload CSV File with Variants",
                 accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
       
-<<<<<<< HEAD
       # Option to run OpenCRAVAT and fetch the scores
-      actionButton("fetchButton", "Fetch Variant Data"),
-=======
-      # Conditional panel that shows upload options if the user chooses to upload their own dataset
-      conditionalPanel(
-        condition = "input.data_source == 'upload'",
-        selectInput("upload_type", "Select Upload Option:",
-                    choices = list("Full Dataset (All Columns)" = "full", "Gene and HGVS Only" = "gene_variant"),
-                    selected = "full"),
-        conditionalPanel(
-          condition = "input.upload_type == 'full'",
-          fileInput("file_full", "Upload Full CSV File", 
-                    accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
-        ),
-        conditionalPanel(
-          condition = "input.upload_type == 'gene_variant'",
-          fileInput("file_gene_variant", "Upload Gene and HGVS_Pro CSV File", 
-                    accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
-        ),
-        actionButton("upload_guide", "Upload Guide", class = "btn-info")
-      ),
->>>>>>> accab69bb2231ac38ebe08526a8009e4539103db
+      actionButton("fetchButton", "Fetch VEP Data"),
       
       # Additional controls for the plot
       checkboxInput("common_variant_filter", "Exclude Common Variants (gnomAD AF > 0.005)", value = TRUE),
@@ -65,7 +37,8 @@ ui <- fluidPage(
     
     mainPanel(
       # Loading icon for when plot does not exist
-      withSpinner(plotOutput("prcPlot", width = "600px", height = "600px")),
+      # withSpinner(plotOutput("prcPlot", width = "600px", height = "600px")),
+      plotOutput("prcPlot", width = "600px", height = "600px"),
       textOutput("errorText")
     )
   )
@@ -73,94 +46,10 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   variant_data <- reactiveVal(NULL)
+  plot_info <- reactiveVal(NULL)
   
-<<<<<<< HEAD
   observeEvent(input$fetchButton, {
     req(input$variant_file)
-=======
-  standard_colnames <- c(
-    "base__hugo", 
-    "gnomad__af", 
-    "varity_r__varity_r", 
-    "alphamissense__am_pathogenicity", 
-    "revel__score", 
-    "classification"
-  )
-  
-  prcdata <- reactive({
-    if (input$upload_type == "full" && !is.null(input$file_full)) {
-      req(input$file_full)
-      
-      # Read uploaded data
-      df <- read.csv(input$file_full$datapath, stringsAsFactors = FALSE)
-      
-      # Check if the number of columns matches the expected format (6 columns in this case)
-      if (ncol(df) != length(standard_colnames)) {
-        showModal(modalDialog(
-          title = "Error",
-          "The uploaded dataset does not have the required number of columns. Please ensure your file has exactly the following columns: base__hugo, gnomad__af, varity_r__varity_r, alphamissense__am_pathogenicity, revel__score, classification.",
-          easyClose = TRUE,
-          footer = modalButton("Close")
-        ))
-        
-        # Reset the file input so user can re-upload the file
-        reset("file_full")
-        updateFileInput(session, "file_full", value = NULL) # TODO: error handling for uploading wrong file
-        return(NULL)
-      }
-      
-      # If correct, assign the standard column names
-      colnames(df) <- standard_colnames
-      df
-    } else if (input$upload_type == "gene_variant" && !is.null(input$file_gene_variant)) {
-      req(input$file_gene_variant)
-      
-      # Read uploaded gene/variant data
-      df <- read.csv(input$file_gene_variant$datapath, stringsAsFactors = FALSE)
-      
-      # Check if the file has exactly two columns
-      if (ncol(df) != 2) {
-        showModal(modalDialog(
-          title = "Error",
-          "The uploaded dataset must have exactly two columns: base__hugo and base__achange.",
-          easyClose = TRUE,
-          footer = modalButton("Close")
-        ))
-        
-        # Reset the file input so user can re-upload the file
-        reset("file_gene_variant")
-        updateFileInput(session, "file_gene_variant", value = NULL) # TODO: error handling
-        return(NULL)
-      }
-      
-      # Assign column names and merge with full dataset
-      colnames(df) <- c("base__hugo", "base__achange")
-      
-      # Load the full stored dataset for matching
-      full_df <- read.csv("preprocessed_id.csv", stringsAsFactors = FALSE)
-      
-      # Merge based on gene and variant ID
-      df <- merge(df, full_df, by = c("base__hugo", "base__achange"))
-      df
-    } else {
-      # Use existing dataset
-      read.table("preprocessed_id.csv", sep = ',', header = TRUE, stringsAsFactors = FALSE)
-    }
-  })
-  
-  observe({
-    df <- prcdata()
-    if (!is.null(df)) {
-      gene_names <- unique(df$base__hugo)
-      updateSelectizeInput(session, "gene", choices = gene_names, selected = gene_names[1], server = TRUE)
-    }
-  })
-  
-  observe({
-    req(input$gene)
-    df <- prcdata()
-    gene_data <- df %>% filter(base__hugo == input$gene)
->>>>>>> accab69bb2231ac38ebe08526a8009e4539103db
     
     # Read the uploaded CSV file
     df <- read.csv(input$variant_file$datapath, stringsAsFactors = FALSE)
@@ -253,6 +142,9 @@ server <- function(input, output, session) {
         
         # Increment the progress bar
         incProgress(1 / nrow(df))
+        
+        # Show a pop-up notification with the progress
+        showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
       }
     })
     
@@ -269,10 +161,9 @@ server <- function(input, output, session) {
   observeEvent(input$plotButton, {
     df <- variant_data()
     df <- df[!is.na(df$classification), ]
-    print(df) # DEBUG
-
+    
     if (is.null(df) || nrow(df) == 0) {
-      output$errorText <- renderText("Not enough data to generate the PRC plot.")
+      output$errorText <- renderText("Not enough rows to generate the PRC plot.")
       return()
     }
     
@@ -292,7 +183,9 @@ server <- function(input, output, session) {
     
     df <- df[order(df$classification), ]
     
-    prcfiltered <- df
+    # Filter for the selected scores
+    prcfiltered <- df %>%
+      filter(rowSums(!is.na(df[selected_scores])) > 0)
     
     B_org <- sum(prcfiltered$classification == TRUE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
     P_org <- sum(prcfiltered$classification == FALSE & rowSums(!is.na(prcfiltered[selected_scores])) > 0)
@@ -300,7 +193,8 @@ server <- function(input, output, session) {
     tryCatch({
       yrobj <- yr2(truth = prcfiltered[["classification"]], scores = prcfiltered[selected_scores], high = rep(FALSE, length(selected_scores)))
       
-      plot_data <- list(
+      # Store plot information in plot_info instead of overwriting variant_data
+      plot_info(list(
         yrobj = yrobj,
         lty_styles = c("dashed", "solid", "dashed")[1:length(selected_scores)],
         col_styles = c("purple", "cadetblue2", "orange")[1:length(selected_scores)],
@@ -308,20 +202,33 @@ server <- function(input, output, session) {
         selected_scores = selected_scores,
         B_org = B_org,
         P_org = P_org,
-        prcfiltered = prcfiltered
-      )
-      
-      output$prcPlot <- renderPlot({
-        draw.prc(plot_data$yrobj, lty = plot_data$lty_styles, col = plot_data$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_data$gene_s, " PRCs for ", paste(plot_data$selected_scores, collapse = ", ")))
-        abline(h = 90, lty = "dashed")
-        legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_data$P_org), paste("# of Benign and Likely Benign:", plot_data$B_org)), pch = 15, bty = "n")
-      }, width = 600, height = 600, res = 72)
+        prcfiltered = prcfiltered  # Save the filtered data for metadata
+      ))
       
       output$errorText <- renderText("")
       
     }, error = function(e) {
-      output$errorText <- renderText("Error: Not enough data to generate the PRC plot.")
+      plot_info(NULL)
+      output$errorText <- renderText("Not enough data to generate PRC plot.")
     })
+    
+    output$prcPlot <- renderPlot({
+      plot_details <- plot_info()
+      if (!is.null(plot_details)) {
+        tryCatch({
+          draw.prc(plot_details$yrobj, lty = plot_details$lty_styles, col = plot_details$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_details$gene_s, " PRCs for ", paste(plot_details$selected_scores, collapse = ", ")))
+          abline(h = 90, lty = "dashed")
+          legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_details$P_org), paste("# of Benign and Likely Benign:", plot_details$B_org)), pch = 15, bty = "n")
+        }, error = function(e) {
+          showModal(modalDialog(
+            title = 'Error',
+            'Not enough data',
+            easyClose = TRUE,
+            footer = NULL
+          ))
+        })
+      }
+    }, width = 600, height = 600, res = 72)
   })
   
   output$downloadPlotPNG <- downloadHandler(
@@ -329,12 +236,12 @@ server <- function(input, output, session) {
       paste("PRC_plot_", Sys.Date(), ".png", sep = "")
     },
     content = function(file) {
-      plot_data <- variant_data()
-      if (!is.null(plot_data)) {
+      plot_details <- plot_info()
+      if (!is.null(plot_details)) {
         png(file, width = 6, height = 6, units = "in", res = 72)
-        draw.prc(plot_data$yrobj, lty = plot_data$lty_styles, col = plot_data$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_data$gene_s, " PRCs for ", paste(plot_data$selected_scores, collapse = ", ")))
+        draw.prc(plot_details$yrobj, lty = plot_details$lty_styles, col = plot_details$col_styles, lwd = 2, balanced = TRUE, main = paste0(plot_details$gene_s, " PRCs for ", paste(plot_details$selected_scores, collapse = ", ")))
         abline(h = 90, lty = "dashed")
-        legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_data$P_org), paste("# of Benign and Likely Benign:", plot_data$B_org)), pch = 15, bty = "n")
+        legend("left", legend = c(paste("# of Pathogenic and Likely Pathogenic:", plot_details$P_org), paste("# of Benign and Likely Benign:", plot_details$B_org)), pch = 15, bty = "n")
         dev.off()
       }
     }
@@ -345,17 +252,17 @@ server <- function(input, output, session) {
       paste("PRC_Report_", Sys.Date(), ".pdf", sep = "")
     },
     content = function(file) {
-      plot_data <- variant_data()
-      if (!is.null(plot_data)) {
+      plot_details <- plot_info()
+      if (!is.null(plot_details)) {
         # Generate the PDF report
         rmarkdown::render(input = "report_template.Rmd",
                           output_file = file,
                           params = list(
-                            gene_s = plot_data$gene_s,
-                            selected_scores = plot_data$selected_scores,
-                            B_org = plot_data$B_org,
-                            P_org = plot_data$P_org,
-                            prcfiltered = plot_data$prcfiltered
+                            gene_s = plot_details$gene_s,
+                            selected_scores = plot_details$selected_scores,
+                            B_org = plot_details$B_org,
+                            P_org = plot_details$P_org,
+                            prcfiltered = plot_details$prcfiltered
                           ),
                           envir = new.env(parent = globalenv()))
       }
@@ -365,8 +272,3 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
-# Start the plumber API
-#pr <- plumber::plumb("api.R")
-#pr$run(port = 8000)
-
