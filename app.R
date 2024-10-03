@@ -12,9 +12,23 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      # File input for CSV containing variants
-      fileInput("variant_file", "Upload CSV File with Variants",
-                accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv")),
+      radioButtons("input_type", "Select Input Type:",
+                   choices = list("Chromosome, Position, Ref, Alt" = "chrom_pos",
+                                  "Gene and Amino Acid Change (HGVS)" = "hgvs")),
+      
+      # File input for Chromosome, Position, Reference_Base, Alternate_Base
+      conditionalPanel(
+        condition = "input.input_type == 'chrom_pos'",
+        fileInput("variant_file", "Upload CSV File (Chromosome, Position, Reference, Alternate)",
+                  accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+      ),
+      
+      # File input for Gene and Amino Acid Change (HGVS)
+      conditionalPanel(
+        condition = "input.input_type == 'hgvs'",
+        fileInput("variant_file_hgvs", "Upload CSV File (Gene, Amino Acid Change - HGVS)",
+                  accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
+      ),
       
       # Option to run OpenCRAVAT and fetch the scores
       actionButton("fetchButton", "Fetch VEP Data"),
@@ -44,25 +58,155 @@ ui <- fluidPage(
   )
 )
 
+get_ensembl_protein_id <- function(gene_name) {
+  # Construct the API URL to lookup the gene
+  api_url <- paste0("https://rest.ensembl.org/lookup/symbol/human/", gene_name, "?expand=1")
+  
+  # Make the GET request to Ensembl with explicit encoding
+  response <- GET(api_url, add_headers("Content-Type" = "application/json"))
+  
+  # Parse the JSON response with explicit encoding
+  result <- fromJSON(content(response, "text", encoding = "UTF-8"), flatten = TRUE)
+  
+  # Print the result for debugging
+  print(result)  # DEBUG - Print the entire API response for inspection
+  
+  # Initialize variables to store the canonical protein ID and the first valid protein ID
+  canonical_protein_id <- NA
+  first_valid_protein_id <- NA
+  
+  # Check if the response contains any transcripts
+  if (!is.null(result$transcript) && length(result$transcript) > 0) {
+    print("Transcripts found")  # DEBUG
+    
+    # Iterate through the transcripts
+    for (transcript in result$transcript) {
+      if (!is.null(transcript$Translation$id)) {
+        # Check if the transcript is canonical
+        if (!is.null(transcript$is_canonical) && transcript$is_canonical == 1) {
+          canonical_protein_id <- transcript$Translation$id  # Save canonical protein ID
+          print(paste("Found canonical protein ID:", canonical_protein_id))  # DEBUG
+        }
+        
+        # Save the first valid protein ID in case no canonical transcript exists
+        if (is.na(first_valid_protein_id)) {
+          first_valid_protein_id <- transcript$Translation$id
+          print(paste("Found non-canonical protein ID:", first_valid_protein_id))  # DEBUG
+        }
+      }
+    }
+    
+    # Return the canonical protein ID if available, otherwise return the first valid protein ID
+    if (!is.na(canonical_protein_id)) {
+      return(canonical_protein_id)
+    } else if (!is.na(first_valid_protein_id)) {
+      return(first_valid_protein_id)
+    } else {
+      print("No protein translation found for any transcript")  # DEBUG
+      return(NA)
+    }
+  } else {
+    # If no transcripts were found, return NA
+    print("No transcripts found for the gene")  # DEBUG
+    return(NA)
+  }
+}
+
+
+
+
+
+
+convert_hgvs_to_genomic <- function(hgvs_notation) {
+  # Construct API URL
+  api_url <- paste0("https://rest.ensembl.org/vep/human/hgvs/", hgvs_notation, "?content-type=application/json")
+  
+  # Call the API
+  response <- GET(api_url)
+  
+  # Parse the JSON response with explicit encoding
+  result <- fromJSON(content(response, "text", encoding = "UTF-8"), flatten = TRUE)
+  print(result) # DEBUG
+  
+  # Extract chromosome, position, reference, and alternate alleles
+  chrom <- result$colocated_variants[[1]]$seq_region_name
+  pos <- result$colocated_variants[[1]]$start
+  ref <- result$colocated_variants[[1]]$allele_string %>% strsplit("/") %>% unlist %>% .[1]
+  alt <- result$colocated_variants[[1]]$allele_string %>% strsplit("/") %>% unlist %>% .[2]
+  
+  return(data.frame(Chromosome = chrom, Position = pos, Reference_Base = ref, Alternate_Base = alt))
+}
+
+
+
 server <- function(input, output, session) {
   variant_data <- reactiveVal(NULL)
   plot_info <- reactiveVal(NULL)
   
   observeEvent(input$fetchButton, {
-    req(input$variant_file)
-    
-    # Read the uploaded CSV file
-    df <- read.csv(input$variant_file$datapath, stringsAsFactors = FALSE)
-    colnames(df) <- trimws(colnames(df))
-    
-    # Check for necessary columns
-    if (!all(c("Chromosome", "Position", "Reference_Base", "Alternate_Base") %in% colnames(df))) {
-      output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Chromosome', 'Position', 'Reference_Base', 'Alternate_Base'.")
-      return(NULL)
-    }
+    req(input$input_type)
     
     # Initialize empty list to store results
     all_results <- list()
+    
+    if (input$input_type == "chrom_pos") {
+      # Handle input where user uploads chromosome, position, ref, and alt nucleotides
+      req(input$variant_file)
+      
+      # Read the uploaded CSV file
+      df <- read.csv(input$variant_file$datapath, stringsAsFactors = FALSE)
+      colnames(df) <- trimws(colnames(df))
+      
+      # Check for necessary columns
+      if (!all(c("Chromosome", "Position", "Reference_Base", "Alternate_Base") %in% colnames(df))) {
+        output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Chromosome', 'Position', 'Reference_Base', 'Alternate_Base'.")
+        return(NULL)
+      }
+    } else if (input$input_type == "hgvs") {
+      # Handle input where user uploads gene name and amino acid changes (HGVS notation)
+      req(input$variant_file_hgvs)
+      
+      # Read the uploaded CSV file
+      df_hgvs <- read.csv(input$variant_file_hgvs$datapath, stringsAsFactors = FALSE)
+      colnames(df_hgvs) <- trimws(colnames(df_hgvs))
+      
+      print("read") # DEBUG
+      
+      # Ensure the necessary columns exist
+      if (!all(c("Gene", "Amino_Acid_Change") %in% colnames(df_hgvs))) {
+        output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Gene' and 'Amino_Acid_Change'.")
+        return(NULL)
+      }
+      
+      # Perform the lookup and convert the gene and amino acid change into HGVS notation
+      hgvs_results <- lapply(1:nrow(df_hgvs), function(i) {
+        protein_id <- df_hgvs$Gene[i] # used to be gene_name
+        amino_acid_change <- df_hgvs$Amino_Acid_Change[i]
+        
+        # Look up the Ensembl Protein ID
+        # protein_id <- get_ensembl_protein_id(gene_name)
+        # print(paste("protein_id:", protein_id)) # DEBUG
+        
+        if (!is.na(protein_id)) {
+          # Construct the full HGVS notation
+          hgvs_notation <- paste0(protein_id, ":", amino_acid_change) # Can add p. if we no longer require user to write "p."
+          print(paste("hgvs:", hgvs_notation)) # DEBUG
+          
+          # Call your conversion function or send it to the Ensembl VEP API
+          return(convert_hgvs_to_genomic(hgvs_notation))
+        } else {
+          return(data.frame(Chromosome=NA, Position=NA, Reference_Base=NA, Alternate_Base=NA))  # Return NA if invalid
+        }
+      })
+      
+      # Combine the results into a single data frame
+      df <- do.call(rbind, hgvs_results)
+      
+      print(df) # DEBUG
+      
+      # Now df contains columns: Chromosome, Position, Reference_Base, Alternate_Base
+    }
+    
     
     # Define the standard column names to ensure consistency
     standard_colnames <- c(
@@ -77,6 +221,7 @@ server <- function(input, output, session) {
     
     # Show a progress bar while fetching data
     withProgress(message = 'Fetching Variant Data', value = 0, {
+      print("fetching") # DEBUG
       # Loop through each variant and call the OpenCRAVAT API
       for (i in 1:nrow(df)) {
         chrom <- paste0("chr", df$Chromosome[i])  # API expects 'chr' prefix
@@ -161,6 +306,7 @@ server <- function(input, output, session) {
   observeEvent(input$plotButton, {
     df <- variant_data()
     df <- df[!is.na(df$classification), ]
+    print(df) # DEBUG
     
     if (is.null(df) || nrow(df) == 0) {
       output$errorText <- renderText("Not enough rows to generate the PRC plot.")
