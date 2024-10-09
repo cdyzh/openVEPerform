@@ -3,8 +3,8 @@ library(dplyr)
 library(yogiroc)
 library(httr)
 library(jsonlite)
-library(shinycssloaders)  # For the loading spinner
-library(DT) # For creating data
+library(shinycssloaders)
+library(DT)
 
 # Define UI for the application
 ui <- fluidPage(
@@ -14,7 +14,7 @@ ui <- fluidPage(
     sidebarPanel(
       radioButtons("input_type", "Select Input Type:",
                    choices = list("Chromosome, Position, Ref, Alt" = "chrom_pos",
-                                  "Gene and Amino Acid Change (HGVS)" = "hgvs")),
+                                  "Transcript ID and HGVSC" = "hgvsc")),
       
       # File input for Chromosome, Position, Reference_Base, Alternate_Base
       conditionalPanel(
@@ -23,10 +23,10 @@ ui <- fluidPage(
                   accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
       ),
       
-      # File input for Gene and Amino Acid Change (HGVS)
+      # File input for Transcript ID and HGVSC
       conditionalPanel(
-        condition = "input.input_type == 'hgvs'",
-        fileInput("variant_file_hgvs", "Upload CSV File (Gene, Amino Acid Change - HGVS)",
+        condition = "input.input_type == 'hgvsc'",
+        fileInput("variant_file_hgvsc", "Upload CSV File (Transcript ID, HGVSC)",
                   accept = c("text/csv", "text/comma-separated-values,text/plain", ".csv"))
       ),
       
@@ -46,98 +46,15 @@ ui <- fluidPage(
       actionButton("plotButton", "Generate PRC Plot"),
       downloadButton("downloadPlotPNG", "Download PRC Plot as PNG"),
       downloadButton("downloadPlotPDF", "Download PRC Plot and Metadata"),
-      helpText("Upload a CSV file with columns: Chromosome, Position, Reference_Base, Alternate_Base.")
+      helpText("Upload a CSV file with columns: Chromosome, Position, Reference_Base, Alternate_Base, or Transcript ID and HGVSC.")
     ),
     
     mainPanel(
-      # Loading icon for when plot does not exist
-      # withSpinner(plotOutput("prcPlot", width = "600px", height = "600px")),
       plotOutput("prcPlot", width = "600px", height = "600px"),
       textOutput("errorText")
     )
   )
 )
-
-get_ensembl_protein_id <- function(gene_name) {
-  # Construct the API URL to lookup the gene
-  api_url <- paste0("https://rest.ensembl.org/lookup/symbol/human/", gene_name, "?expand=1")
-  
-  # Make the GET request to Ensembl with explicit encoding
-  response <- GET(api_url, add_headers("Content-Type" = "application/json"))
-  
-  # Parse the JSON response with explicit encoding
-  result <- fromJSON(content(response, "text", encoding = "UTF-8"), flatten = TRUE)
-  
-  # Print the result for debugging
-  print(result)  # DEBUG - Print the entire API response for inspection
-  
-  # Initialize variables to store the canonical protein ID and the first valid protein ID
-  canonical_protein_id <- NA
-  first_valid_protein_id <- NA
-  
-  # Check if the response contains any transcripts
-  if (!is.null(result$transcript) && length(result$transcript) > 0) {
-    print("Transcripts found")  # DEBUG
-    
-    # Iterate through the transcripts
-    for (transcript in result$transcript) {
-      if (!is.null(transcript$Translation$id)) {
-        # Check if the transcript is canonical
-        if (!is.null(transcript$is_canonical) && transcript$is_canonical == 1) {
-          canonical_protein_id <- transcript$Translation$id  # Save canonical protein ID
-          print(paste("Found canonical protein ID:", canonical_protein_id))  # DEBUG
-        }
-        
-        # Save the first valid protein ID in case no canonical transcript exists
-        if (is.na(first_valid_protein_id)) {
-          first_valid_protein_id <- transcript$Translation$id
-          print(paste("Found non-canonical protein ID:", first_valid_protein_id))  # DEBUG
-        }
-      }
-    }
-    
-    # Return the canonical protein ID if available, otherwise return the first valid protein ID
-    if (!is.na(canonical_protein_id)) {
-      return(canonical_protein_id)
-    } else if (!is.na(first_valid_protein_id)) {
-      return(first_valid_protein_id)
-    } else {
-      print("No protein translation found for any transcript")  # DEBUG
-      return(NA)
-    }
-  } else {
-    # If no transcripts were found, return NA
-    print("No transcripts found for the gene")  # DEBUG
-    return(NA)
-  }
-}
-
-
-
-
-
-
-convert_hgvs_to_genomic <- function(hgvs_notation) {
-  # Construct API URL
-  api_url <- paste0("https://rest.ensembl.org/vep/human/hgvs/", hgvs_notation, "?content-type=application/json")
-  
-  # Call the API
-  response <- GET(api_url)
-  
-  # Parse the JSON response with explicit encoding
-  result <- fromJSON(content(response, "text", encoding = "UTF-8"), flatten = TRUE)
-  print(result) # DEBUG
-  
-  # Extract chromosome, position, reference, and alternate alleles
-  chrom <- result$colocated_variants[[1]]$seq_region_name
-  pos <- result$colocated_variants[[1]]$start
-  ref <- result$colocated_variants[[1]]$allele_string %>% strsplit("/") %>% unlist %>% .[1]
-  alt <- result$colocated_variants[[1]]$allele_string %>% strsplit("/") %>% unlist %>% .[2]
-  
-  return(data.frame(Chromosome = chrom, Position = pos, Reference_Base = ref, Alternate_Base = alt))
-}
-
-
 
 server <- function(input, output, session) {
   variant_data <- reactiveVal(NULL)
@@ -150,10 +67,7 @@ server <- function(input, output, session) {
     all_results <- list()
     
     if (input$input_type == "chrom_pos") {
-      # Handle input where user uploads chromosome, position, ref, and alt nucleotides
       req(input$variant_file)
-      
-      # Read the uploaded CSV file
       df <- read.csv(input$variant_file$datapath, stringsAsFactors = FALSE)
       colnames(df) <- trimws(colnames(df))
       
@@ -162,51 +76,24 @@ server <- function(input, output, session) {
         output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Chromosome', 'Position', 'Reference_Base', 'Alternate_Base'.")
         return(NULL)
       }
-    } else if (input$input_type == "hgvs") {
-      # Handle input where user uploads gene name and amino acid changes (HGVS notation)
-      req(input$variant_file_hgvs)
+    } else if (input$input_type == "hgvsc") {
+      req(input$variant_file_hgvsc)
+      df_hgvsc <- read.csv(input$variant_file_hgvsc$datapath, stringsAsFactors = FALSE)
+      colnames(df_hgvsc) <- trimws(colnames(df_hgvsc))
       
-      # Read the uploaded CSV file
-      df_hgvs <- read.csv(input$variant_file_hgvs$datapath, stringsAsFactors = FALSE)
-      colnames(df_hgvs) <- trimws(colnames(df_hgvs))
-      
-      print("read") # DEBUG
-      
-      # Ensure the necessary columns exist
-      if (!all(c("Gene", "Amino_Acid_Change") %in% colnames(df_hgvs))) {
-        output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Gene' and 'Amino_Acid_Change'.")
+      # Ensure the necessary columns exist and rename to standard column name
+      if (!all(c("Transcript_ID", "HGVSC") %in% colnames(df_hgvsc))) {
+        output$errorText <- renderText("Error: The uploaded CSV must contain the columns 'Transcript_ID' and 'HGVSC'.")
         return(NULL)
       }
       
-      # Perform the lookup and convert the gene and amino acid change into HGVS notation
-      hgvs_results <- lapply(1:nrow(df_hgvs), function(i) {
-        protein_id <- df_hgvs$Gene[i] # used to be gene_name
-        amino_acid_change <- df_hgvs$Amino_Acid_Change[i]
-        
-        # Look up the Ensembl Protein ID
-        # protein_id <- get_ensembl_protein_id(gene_name)
-        # print(paste("protein_id:", protein_id)) # DEBUG
-        
-        if (!is.na(protein_id)) {
-          # Construct the full HGVS notation
-          hgvs_notation <- paste0(protein_id, ":", amino_acid_change) # Can add p. if we no longer require user to write "p."
-          print(paste("hgvs:", hgvs_notation)) # DEBUG
-          
-          # Call your conversion function or send it to the Ensembl VEP API
-          return(convert_hgvs_to_genomic(hgvs_notation))
-        } else {
-          return(data.frame(Chromosome=NA, Position=NA, Reference_Base=NA, Alternate_Base=NA))  # Return NA if invalid
-        }
-      })
+      # Concatenate the Transcript ID and HGVSC into a single column
+      df_hgvsc <- df_hgvsc %>%
+        mutate(OpenCRAVAT_Input = paste0(Transcript_ID, ":", HGVSC))
       
-      # Combine the results into a single data frame
-      df <- do.call(rbind, hgvs_results)
-      
-      print(df) # DEBUG
-      
-      # Now df contains columns: Chromosome, Position, Reference_Base, Alternate_Base
+      # Use the concatenated column for further processing
+      df <- df_hgvsc %>% select(OpenCRAVAT_Input)
     }
-    
     
     # Define the standard column names to ensure consistency
     standard_colnames <- c(
@@ -221,23 +108,38 @@ server <- function(input, output, session) {
     
     # Show a progress bar while fetching data
     withProgress(message = 'Fetching Variant Data', value = 0, {
-      print("fetching") # DEBUG
-      # Loop through each variant and call the OpenCRAVAT API
       for (i in 1:nrow(df)) {
-        chrom <- paste0("chr", df$Chromosome[i])  # API expects 'chr' prefix
-        pos <- df$Position[i]
-        ref <- df$Reference_Base[i]
-        alt <- df$Alternate_Base[i]
-        
-        # Construct the API URL for the request
-        api_url <- paste0(
-          "https://run.opencravat.org/submit/annotate?",
-          "chrom=", chrom,
-          "&pos=", pos,
-          "&ref_base=", ref,
-          "&alt_base=", alt,
-          "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
-        )
+        if (input$input_type == "chrom_pos") {
+          # Check if 'Chromosome' already contains the 'chr' prefix
+          if (grepl("^chr", df$Chromosome[i])) {
+            chrom <- df$Chromosome[i]  # Use as is if it contains 'chr'
+          } else {
+            chrom <- paste0("chr", df$Chromosome[i])  # Add 'chr' prefix if missing
+          }
+          pos <- df$Position[i]
+          ref <- df$Reference_Base[i]
+          alt <- df$Alternate_Base[i]
+          
+          # Construct API URL for chromosome-based input
+          api_url <- paste0(
+            "https://run.opencravat.org/submit/annotate?",
+            "chrom=", chrom,
+            "&pos=", pos,
+            "&ref_base=", ref,
+            "&alt_base=", alt,
+            "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
+          )
+        } else if (input$input_type == "hgvsc") {
+          hgvsc_input <- df$OpenCRAVAT_Input[i]
+          
+          print(hgvsc_input) # DEBUG
+          # Construct API URL for HGVSC input
+          api_url <- paste0(
+            "https://run.opencravat.org/submit/annotate?",
+            "hgvs=", hgvsc_input,
+            "&annotators=clinvar,gnomad,varity_r,revel,alphamissense"
+          )
+        }
         
         # Make the GET request to OpenCRAVAT
         response <- GET(api_url)
@@ -251,9 +153,11 @@ server <- function(input, output, session) {
         # Determine the classification value (T/F) based on ClinVar significance
         classification <- NA
         if (!is.na(clinvar_sig)) {
-          if (grepl("benign", tolower(clinvar_sig))) {
+          clinvar_sig_lower <- tolower(clinvar_sig)
+          
+          if (grepl("benign", clinvar_sig_lower)) {
             classification <- TRUE
-          } else if (grepl("pathogenic", tolower(clinvar_sig))) {
+          } else if (grepl("pathogenic", clinvar_sig_lower) && !grepl("conflicting", clinvar_sig_lower)) {
             classification <- FALSE
           }
         }
@@ -285,20 +189,18 @@ server <- function(input, output, session) {
         # Append to the results list
         all_results[[i]] <- result_df
         
-        # Increment the progress bar
         incProgress(1 / nrow(df))
-        
-        # Show a pop-up notification with the progress
         showNotification(paste(i, "/", nrow(df), "variants fetched"), duration = 3, type = "message")
       }
     })
+    print("done1")
     
     # Combine all results into a data frame
     variant_data_df <- do.call(rbind, all_results)
-    
+
     # Update reactive variable
     variant_data(variant_data_df)
-    
+    print("done2")
     # Clear any error message
     output$errorText <- renderText("")
   })
